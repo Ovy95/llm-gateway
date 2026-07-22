@@ -1,0 +1,21 @@
+# Compiled binaries
+/llm-gateway
+/gateway
+/bin/
+*.exe
+
+# Secrets / local env — NEVER commit your OpenAI key
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Go test/coverage artifacts
+*.test
+*.out
