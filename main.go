@@ -8,17 +8,11 @@ import (
 )
 
 func main() {
-
 	validKeys := map[string]string{
 		"sk-demo-alice": "alice",
 		"sk-demo-bob":   "bob",
 	}
-	a := api.New(validKeys) // build an instance, inject the keys
+	a := api.New(validKeys)
 
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /healthz", a.Health)
-	mux.HandleFunc("POST /v1/chat/completions", a.ChatCompletions)
-
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	log.Fatal(http.ListenAndServe(":8080", a.Routes()))
 }

@@ -13,6 +13,13 @@ func New(keys map[string]string) *API {
 	return &API{validKeys: keys}
 }
 
+func (a *API) Routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", a.Health)
+	mux.HandleFunc("POST /v1/chat/completions", a.ChatCompletions)
+	return mux
+}
+
 func (a *API) Health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, err := w.Write([]byte("ok"))
