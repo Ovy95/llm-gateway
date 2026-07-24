@@ -27,30 +27,31 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	_, found := a.validKeys[key]
 
 	if !ok || !found {
-		http.Error(w, "missing or invalid api key", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, "missing or invalid api key")
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), UpstreamTimeout)
-	defer cancel()
 
 	if !a.limiterFor(key).Allow() {
 		w.Header().Set("Retry-After", "12")
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), a.timeout)
+	defer cancel()
 
 	resp, err := a.forwardToUpstream(ctx, r)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
+			writeError(w, http.StatusGatewayTimeout, "gateway timeout")
 			return
 		}
-		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		writeError(w, http.StatusBadGateway, "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
 
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
