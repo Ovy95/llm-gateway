@@ -2,7 +2,10 @@ package api
 
 import (
 	"net/http"
+	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 const UpstreamTimeout = 30 * time.Second
@@ -18,6 +21,8 @@ type API struct {
 	upstreamKey string
 	upstreamURL string
 	client      *http.Client
+	limiters    map[string]*rate.Limiter
+	mu          sync.Mutex
 }
 
 func New(cfg Config) *API {
@@ -26,6 +31,7 @@ func New(cfg Config) *API {
 		upstreamKey: cfg.UpstreamKey,
 		upstreamURL: cfg.UpstreamURL,
 		client:      cfg.Client,
+		limiters:    make(map[string]*rate.Limiter),
 	}
 }
 

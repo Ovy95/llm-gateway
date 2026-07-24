@@ -34,6 +34,12 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), UpstreamTimeout)
 	defer cancel()
 
+	if !a.limiterFor(key).Allow() {
+		w.Header().Set("Retry-After", "12")
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+
 	resp, err := a.forwardToUpstream(ctx, r)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
