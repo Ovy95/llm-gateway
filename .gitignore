@@ -4,7 +4,7 @@
 /bin/
 *.exe
 
-# Secrets / local env — NEVER commit your OpenAI key
+# Secrets / local .env — NEVER commit your OpenAI key
 .env
 .env.*
 !.env.example

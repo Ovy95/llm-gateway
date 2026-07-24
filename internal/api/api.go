@@ -1,16 +1,35 @@
 package api
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
+const UpstreamTimeout = 30 * time.Second
+
+type Config struct {
+	Keys        map[string]string
+	UpstreamKey string
+	UpstreamURL string
+	Client      *http.Client
+}
 type API struct {
-	validKeys map[string]string
+	validKeys   map[string]string
+	upstreamKey string
+	upstreamURL string
+	client      *http.Client
 }
 
-func New(keys map[string]string) *API {
-	return &API{validKeys: keys}
+func New(cfg Config) *API {
+	return &API{
+		validKeys:   cfg.Keys,
+		upstreamKey: cfg.UpstreamKey,
+		upstreamURL: cfg.UpstreamURL,
+		client:      cfg.Client,
+	}
 }
 
 func (a *API) Routes() http.Handler {
@@ -31,13 +50,32 @@ func (a *API) Health(w http.ResponseWriter, r *http.Request) {
 func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	key, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 
-	name, found := a.validKeys[key]
+	_, found := a.validKeys[key]
 
 	if !ok || !found {
 		http.Error(w, "missing or invalid api key", http.StatusUnauthorized)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("authorized: " + name))
+	ctx, cancel := context.WithTimeout(r.Context(), UpstreamTimeout)
+	defer cancel()
+
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.upstreamURL+"/v1/chat/completions", r.Body)
+	if err != nil {
+		http.Error(w, "failed to build upstream request", http.StatusInternalServerError)
+		return
+	}
+
+	upstreamReq.Header.Set("Authorization", "Bearer "+a.upstreamKey)
+	upstreamReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.client.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
