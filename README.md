@@ -66,7 +66,7 @@ Numbering matches the project's acceptance criteria doc.
 | US-1 | Authenticated proxying — valid gateway key forwards to the provider, client never sees the real key | ✅ Done, curl-verified |
 | US-2 | Reject unknown/missing keys before any upstream call | ✅ Done, automated test (`TestChatCompletions_Auth`) |
 | US-3 | Per-key rate limiting (token bucket), one tenant can't affect another's limit | ✅ Done, table-driven test (`TestChatCompletions_RateLimit`: burst allowed / 6th → `429` + Retry-After / per-key isolation) |
-| US-4 | Per-key spend cap, rejected before the upstream call once budget is exceeded | ⬜ Not started |
+| US-4 | Per-key spend cap, rejected before the upstream call once budget is exceeded | 🚧 In progress — concurrency-safe usage store (interface + in-memory impl) built; cost table + cap enforcement + tests pending |
 | US-5 | Structured audit log per request — no request or response body ever logged | ⬜ Not started |
 | US-6 | `/stats` usage visibility, read through the store interface | ⬜ Not started |
 | US-7 | Liveness endpoint, doesn't touch the provider | ✅ Done |
