@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -27,6 +28,7 @@ func main() {
 	if upstreamKey == "" {
 		log.Fatal("OPENAI_API_KEY must be set")
 	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	cfg := api.Config{
 		Keys:        validKeys,
@@ -34,6 +36,7 @@ func main() {
 		UpstreamURL: upstreamURL,
 		Client:      &http.Client{Timeout: api.UpstreamClientTimeout},
 		Timeout:     api.DefaultUpstreamTimeout,
+		Logger:      logger,
 	}
 	a := api.New(cfg)
 

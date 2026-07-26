@@ -1,8 +1,11 @@
 package api_test
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,7 +208,7 @@ func TestChatCompletions_SpendCap(t *testing.T) {
 	// each call reports 1M+1M tokens on gpt-4o-mini = $0.15 + $0.60 = $0.75
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"model":"gpt-4o-mini","usage":{"prompt_tokens":1000000,"completion_tokens":1000000}}`))
+		w.Write([]byte(`{"model":"gpt-4o-mini","Usage":{"prompt_tokens":1000000,"completion_tokens":1000000}}`))
 	}))
 	defer fake.Close()
 
@@ -245,4 +248,55 @@ func TestChatCompletions_SpendCap(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChatCompletions_AuditLogNoBodies(t *testing.T) {
+	const secretPrompt = "SUPER_SECRET_PROMPT_12345"
+	const secretResponse = "SUPER_SECRET_RESPONSE_67890"
+
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"gpt-4o-mini","Usage":{"prompt_tokens":10,"completion_tokens":20},"choices":[{"message":{"content":"` + secretResponse + `"}}]}`))
+	}))
+	defer fake.Close()
+
+	var logBuf bytes.Buffer
+	a := api.New(api.Config{
+		Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 100}},
+		UpstreamKey: "fake-key",
+		UpstreamURL: fake.URL,
+		Client:      fake.Client(),
+		Logger:      slog.New(slog.NewJSONHandler(&logBuf, nil)),
+	})
+
+	reqBody := `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"` + secretPrompt + `"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer sk-demo-alice")
+	w := httptest.NewRecorder()
+	a.Routes().ServeHTTP(w, req)
+
+	logOutput := logBuf.String()
+
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "sad path: request prompt content must not appear in the audit log", content: secretPrompt},
+		{name: "sad path: response body content must not appear in the audit log", content: secretResponse},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if strings.Contains(logOutput, tt.content) {
+				t.Errorf("audit log leaked content %q; log was: %s", tt.content, logOutput)
+			}
+		})
+	}
+
+	t.Run("happy path: audit log contains the structured metadata fields", func(t *testing.T) {
+		for _, field := range []string{"decision", "cost_usd", "model", "latency_ms"} {
+			if !strings.Contains(logOutput, field) {
+				t.Errorf("audit log missing expected field %q; log was: %s", field, logOutput)
+			}
+		}
+	})
 }

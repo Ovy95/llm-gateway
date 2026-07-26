@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -23,6 +25,7 @@ type Config struct {
 	UpstreamURL string
 	Client      *http.Client
 	Timeout     time.Duration
+	Logger      *slog.Logger
 }
 type API struct {
 	validKeys   map[string]KeyConfig
@@ -33,12 +36,17 @@ type API struct {
 	limiters    map[string]*rate.Limiter
 	mu          sync.Mutex
 	store       UsageStore
+	logger      *slog.Logger
 }
 
 func New(cfg Config) *API {
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = DefaultUpstreamTimeout
+	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}
 
 	return &API{
@@ -49,6 +57,7 @@ func New(cfg Config) *API {
 		timeout:     timeout,
 		limiters:    make(map[string]*rate.Limiter),
 		store:       newMemoryStore(),
+		logger:      logger,
 	}
 }
 
@@ -56,6 +65,7 @@ func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.Health)
 	mux.HandleFunc("POST /v1/chat/completions", a.ChatCompletions)
+	mux.HandleFunc("GET /stats", a.Stats)
 	return mux
 }
 

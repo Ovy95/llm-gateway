@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (a *API) forwardToUpstream(ctx context.Context, r *http.Request) (*http.Response, error) {
@@ -24,6 +25,7 @@ func (a *API) forwardToUpstream(ctx context.Context, r *http.Request) (*http.Res
 }
 
 func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	key, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 
 	keyCfg, found := a.validKeys[key]
@@ -70,11 +72,21 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			Usage struct {
 				PromptTokens     int `json:"prompt_tokens"`
 				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
+			} `json:"Usage"`
 		}
 		if json.Unmarshal(body, &parsed) == nil {
 			if cost, ok := costUSD(parsed.Model, parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens); ok {
 				a.store.Record(key, parsed.Usage.PromptTokens+parsed.Usage.CompletionTokens, cost)
+				a.audit(auditEntry{
+					key:              key,
+					model:            parsed.Model,
+					promptTokens:     parsed.Usage.PromptTokens,
+					completionTokens: parsed.Usage.CompletionTokens,
+					costUSD:          cost,
+					status:           resp.StatusCode,
+					latency:          time.Since(start),
+					decision:         "allowed",
+				})
 			}
 		}
 	}
