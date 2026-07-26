@@ -12,15 +12,20 @@ import (
 const DefaultUpstreamTimeout = 30 * time.Second
 const UpstreamClientTimeout = DefaultUpstreamTimeout + 5*time.Second
 
+type KeyConfig struct {
+	Tenant    string
+	BudgetUSD float64
+	RPM       int // requests per minute; burst = RPM
+}
 type Config struct {
-	Keys        map[string]string
+	Keys        map[string]KeyConfig
 	UpstreamKey string
 	UpstreamURL string
 	Client      *http.Client
 	Timeout     time.Duration
 }
 type API struct {
-	validKeys   map[string]string
+	validKeys   map[string]KeyConfig
 	upstreamKey string
 	upstreamURL string
 	client      *http.Client

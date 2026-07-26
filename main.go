@@ -12,9 +12,10 @@ import (
 
 func main() {
 	_ = godotenv.Load()
-	validKeys := map[string]string{
-		"sk-demo-alice": "alice",
-		"sk-demo-bob":   "bob",
+
+	validKeys := map[string]api.KeyConfig{
+		"sk-demo-alice": {Tenant: "alice", BudgetUSD: 0.10, RPM: 5},
+		"sk-demo-bob":   {Tenant: "bob", BudgetUSD: 0.01, RPM: 2},
 	}
 
 	upstreamURL := os.Getenv("UPSTREAM_URL")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !a.limiterFor(key).Allow() {
-		w.Header().Set("Retry-After", "12")
+		w.Header().Set("Retry-After", strconv.Itoa(60/a.rpmFor(key)))
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}

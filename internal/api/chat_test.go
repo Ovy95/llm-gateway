@@ -18,7 +18,7 @@ func TestChatCompletions_Auth(t *testing.T) {
 	defer fakeUpstream.Close()
 
 	a := api.New(api.Config{
-		Keys:        map[string]string{"sk-demo-alice": "alice"},
+		Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 5}},
 		UpstreamKey: "fake-key",
 		UpstreamURL: fakeUpstream.URL,
 		Client:      fakeUpstream.Client(),
@@ -114,7 +114,7 @@ func TestChatCompletions_UpstreamFailures(t *testing.T) {
 			defer fake.Close()
 
 			a := api.New(api.Config{
-				Keys:        map[string]string{"sk-demo-alice": "alice"},
+				Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 5}},
 				UpstreamKey: "fake-key",
 				UpstreamURL: fake.URL,
 				Client:      fake.Client(),
@@ -180,7 +180,7 @@ func TestChatCompletions_RateLimit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := api.New(api.Config{
-				Keys:        map[string]string{"sk-demo-alice": "alice", "sk-demo-bob": "bob"},
+				Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 5}, "sk-demo-bob": {Tenant: "bob", BudgetUSD: 100, RPM: 2}},
 				UpstreamKey: "fake-key",
 				UpstreamURL: fake.URL,
 				Client:      fake.Client(),
