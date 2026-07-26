@@ -31,6 +31,14 @@ func TestCostUSD(t *testing.T) {
 			wantOK:           true,
 		},
 		{
+			name:             "happy path: dated snapshot name matches the model family by prefix",
+			model:            "gpt-4o-mini-2024-07-18",
+			promptTokens:     1000,
+			completionTokens: 500,
+			wantCost:         0.00045,
+			wantOK:           true,
+		},
+		{
 			name:             "sad path: unknown model returns ok=false and zero cost",
 			model:            "gpt-9-ultra",
 			promptTokens:     1000,

@@ -1,5 +1,7 @@
 package api
 
+import "strings"
+
 // modelRate is the price per 1M tokens, split by prompt vs completion —
 // providers charge them at different rates (completion is usually dearer).
 type modelRate struct {
@@ -13,11 +15,21 @@ var modelRates = map[string]modelRate{
 	// add more models here as needed
 }
 
-// costUSD converts a response's token usage into a dollar cost.
+// costUSD converts a response's token Usage into a dollar cost.
 // Returns ok=false if the model isn't in the table, so the caller can notice a
 // config mistake instead of silently charging 0.
 func costUSD(model string, promptTokens, completionTokens int) (float64, bool) {
 	rate, ok := modelRates[model]
+	if !ok {
+		// OpenAI echoes dated snapshots like "gpt-4o-mini-2024-07-18";
+		// fall back to matching the model family by prefix.
+		for name, r := range modelRates {
+			if strings.HasPrefix(model, name) {
+				rate, ok = r, true
+				break
+			}
+		}
+	}
 	if !ok {
 		return 0, false
 	}
@@ -26,5 +38,4 @@ func costUSD(model string, promptTokens, completionTokens int) (float64, bool) {
 	cost += rate.promptPerM * float64(promptTokens) / 1_000_000
 	cost += rate.completionPerM * float64(completionTokens) / 1_000_000
 	return cost, true
-
 }
