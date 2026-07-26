@@ -18,7 +18,7 @@ type usage struct {
 
 type memoryStore struct {
 	mu   sync.Mutex
-	data map[string]usage // key -> its usage
+	data map[string]usage
 }
 
 func newMemoryStore() *memoryStore {

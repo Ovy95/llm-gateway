@@ -75,7 +75,7 @@ Numbering matches the project's acceptance criteria doc.
 ## Definition of Done — tests
 
 - [x] Table-driven tests, `t.Run` subtests — auth gate (`TestChatCompletions_Auth`: missing key / unrecognised key / valid key, each asserting both status code and whether the fake upstream was actually hit)
-- [ ] Table-driven tests on cost calculation
+- [x] Table-driven tests on cost calculation (`cost_test.go` — known model, zero tokens, unknown model; float-epsilon comparison)
 - [x] Table-driven tests on the rate limiter, including per-key isolation (`ratelimit_test.go`)
 - [x] `httptest.Server` fake provider — 200 / 500 / timeout done (`TestChatCompletions_UpstreamFailures`); malformed-body case deferred to US-5 (needs response parsing)
 - [ ] Fake usage store implementing the store interface — assert what was recorded
