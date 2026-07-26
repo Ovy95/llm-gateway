@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ovy95/llm-gateway/internal/api"
 )
@@ -66,6 +67,68 @@ func TestChatCompletions_Auth(t *testing.T) {
 			}
 			if upstreamHit != tt.wantHit {
 				t.Errorf("upstream hit = %v, want %v", upstreamHit, tt.wantHit)
+			}
+		})
+	}
+}
+
+func TestChatCompletions_UpstreamFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		upstream   http.HandlerFunc
+		timeout    time.Duration
+		wantStatus int
+	}{
+		{
+			name: "happy path: upstream 200 is passed through to the client",
+			upstream: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"ok":true}`))
+			},
+			timeout:    api.DefaultUpstreamTimeout,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "sad path: upstream 500 is passed through as 500",
+			upstream: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"error":"boom"}`))
+			},
+			timeout:    api.DefaultUpstreamTimeout,
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "sad path: upstream slower than the deadline returns 504",
+			upstream: func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(100 * time.Millisecond)
+				w.Write([]byte(`{"ok":true}`))
+			},
+			timeout:    10 * time.Millisecond,
+			wantStatus: http.StatusGatewayTimeout,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := httptest.NewServer(tt.upstream)
+			defer fake.Close()
+
+			a := api.New(api.Config{
+				Keys:        map[string]string{"sk-demo-alice": "alice"},
+				UpstreamKey: "fake-key",
+				UpstreamURL: fake.URL,
+				Client:      fake.Client(),
+				Timeout:     tt.timeout,
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			req.Header.Set("Authorization", "Bearer sk-demo-alice")
+			w := httptest.NewRecorder()
+
+			a.Routes().ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
 			}
 		})
 	}
