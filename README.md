@@ -66,11 +66,11 @@ Numbering matches the project's acceptance criteria doc.
 | US-1 | Authenticated proxying — valid gateway key forwards to the provider, client never sees the real key | ✅ Done, curl-verified |
 | US-2 | Reject unknown/missing keys before any upstream call | ✅ Done, automated test (`TestChatCompletions_Auth`) |
 | US-3 | Per-key rate limiting (token bucket), one tenant can't affect another's limit | ✅ Done — limits configured per key (`KeyConfig.RPM`: alice 5/min, bob 2/min), `Retry-After` derived from the key's rate. Table-driven test (`TestChatCompletions_RateLimit`: burst allowed / 6th → `429` + Retry-After / per-key isolation) |
-| US-4 | Per-key spend cap, rejected before the upstream call once budget is exceeded | 🚧 In progress — concurrency-safe usage store (interface + in-memory impl) built; cost table + cap enforcement + tests pending |
+| US-4 | Per-key spend cap, rejected before the upstream call once budget is exceeded | ✅ Done — spend checked before the call (gate, not receipt), cost recorded per key after. Table-driven test (`TestChatCompletions_SpendCap`: first request allowed / `402` once budget spent). Soft cap: allowed on the crossing request, blocked on the next |
 | US-5 | Structured audit log per request — no request or response body ever logged | ⬜ Not started |
 | US-6 | `/stats` usage visibility, read through the store interface | ⬜ Not started |
 | US-7 | Liveness endpoint, doesn't touch the provider | ✅ Done |
-| US-8 | Provider failures handled, not propagated blindly (timeout → 504, non-2xx passed through, malformed body doesn't panic) | ✅ Timeout → 504 and non-2xx passthrough done, with a table-driven `httptest` test (`TestChatCompletions_UpstreamFailures`: 200 passthrough / 500 / timeout→504); malformed-body handling arrives with US-5, once the response body is actually parsed |
+| US-8 | Provider failures handled, not propagated blindly (timeout → 504, non-2xx passed through, malformed body doesn't panic) | ✅ Timeout → 504 and non-2xx passthrough done, with a table-driven `httptest` test (`TestChatCompletions_UpstreamFailures`: 200 passthrough / 500 / timeout→504); malformed body now handled best-effort in US-4 (unmarshal failure skips recording but still forwards the bytes — no panic); an explicit malformed-body test is still to add |
 
 ## Definition of Done — tests
 

@@ -200,3 +200,49 @@ func TestChatCompletions_RateLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestChatCompletions_SpendCap(t *testing.T) {
+	// each call reports 1M+1M tokens on gpt-4o-mini = $0.15 + $0.60 = $0.75
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"gpt-4o-mini","usage":{"prompt_tokens":1000000,"completion_tokens":1000000}}`))
+	}))
+	defer fake.Close()
+
+	tests := []struct {
+		name       string
+		priorCalls int
+		wantStatus int
+	}{
+		{
+			name:       "happy path: first request under budget is allowed",
+			priorCalls: 0,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "sad path: request after the budget is spent is rejected with 402",
+			priorCalls: 1, // one $0.75 call already blows the $0.10 budget
+			wantStatus: http.StatusPaymentRequired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := api.New(api.Config{
+				Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 0.10, RPM: 100}},
+				UpstreamKey: "fake-key",
+				UpstreamURL: fake.URL,
+				Client:      fake.Client(),
+			}).Routes()
+
+			for i := 0; i < tt.priorCalls; i++ {
+				doRequest(t, h, "sk-demo-alice")
+			}
+
+			w := doRequest(t, h, "sk-demo-alice")
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
