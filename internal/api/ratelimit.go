@@ -2,12 +2,7 @@ package api
 
 import "golang.org/x/time/rate"
 
-const (
-	requestsPerMinute = 5
-	burstSize         = 5
-	retryAfterSeconds = 60 / requestsPerMinute // = 12s, the bucket's refill interval
-	defaultRPM        = 5
-)
+const defaultRPM = 5
 
 func (a *API) rpmFor(key string) int {
 	rpm := a.validKeys[key].RPM
@@ -23,7 +18,8 @@ func (a *API) limiterFor(key string) *rate.Limiter {
 
 	limiter, ok := a.limiters[key]
 	if !ok {
-		limiter = rate.NewLimiter(rate.Limit(float64(requestsPerMinute)/60.0), burstSize)
+		rpm := a.rpmFor(key)
+		limiter = rate.NewLimiter(rate.Limit(float64(rpm)/60.0), rpm) // burst = rpm
 		a.limiters[key] = limiter
 	}
 	return limiter
