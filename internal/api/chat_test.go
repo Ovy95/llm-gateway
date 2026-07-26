@@ -133,3 +133,70 @@ func TestChatCompletions_UpstreamFailures(t *testing.T) {
 		})
 	}
 }
+
+func doRequest(t *testing.T, h http.Handler, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestChatCompletions_RateLimit(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fake.Close()
+
+	tests := []struct {
+		name           string
+		priorRequests  []string // keys fired before the request under test
+		key            string   // the request we actually assert on
+		wantStatus     int
+		wantRetryAfter bool
+	}{
+		{
+			name:          "happy path: 5th request within the burst is allowed",
+			priorRequests: []string{"sk-demo-alice", "sk-demo-alice", "sk-demo-alice", "sk-demo-alice"},
+			key:           "sk-demo-alice",
+			wantStatus:    http.StatusOK,
+		},
+		{
+			name:           "sad path: 6th request past the burst is rate limited with Retry-After",
+			priorRequests:  []string{"sk-demo-alice", "sk-demo-alice", "sk-demo-alice", "sk-demo-alice", "sk-demo-alice"},
+			key:            "sk-demo-alice",
+			wantStatus:     http.StatusTooManyRequests,
+			wantRetryAfter: true,
+		},
+		{
+			name:          "happy path: one key hitting its limit does not affect another key",
+			priorRequests: []string{"sk-demo-alice", "sk-demo-alice", "sk-demo-alice", "sk-demo-alice", "sk-demo-alice", "sk-demo-alice"},
+			key:           "sk-demo-bob",
+			wantStatus:    http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := api.New(api.Config{
+				Keys:        map[string]string{"sk-demo-alice": "alice", "sk-demo-bob": "bob"},
+				UpstreamKey: "fake-key",
+				UpstreamURL: fake.URL,
+				Client:      fake.Client(),
+			}).Routes()
+
+			for _, k := range tt.priorRequests {
+				doRequest(t, h, k)
+			}
+
+			w := doRequest(t, h, tt.key)
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+			if tt.wantRetryAfter && w.Header().Get("Retry-After") == "" {
+				t.Errorf("expected Retry-After header on 429, got none")
+			}
+		})
+	}
+}
