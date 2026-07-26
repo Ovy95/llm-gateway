@@ -10,6 +10,7 @@ import (
 )
 
 const DefaultUpstreamTimeout = 30 * time.Second
+const UpstreamClientTimeout = DefaultUpstreamTimeout + 5*time.Second
 
 type Config struct {
 	Keys        map[string]string

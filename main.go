@@ -31,7 +31,7 @@ func main() {
 		Keys:        validKeys,
 		UpstreamKey: upstreamKey,
 		UpstreamURL: upstreamURL,
-		Client:      &http.Client{Timeout: api.DefaultUpstreamTimeout},
+		Client:      &http.Client{Timeout: api.UpstreamClientTimeout},
 		Timeout:     api.DefaultUpstreamTimeout,
 	}
 	a := api.New(cfg)
