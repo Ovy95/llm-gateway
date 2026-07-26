@@ -26,6 +26,7 @@ type Config struct {
 	Client      *http.Client
 	Timeout     time.Duration
 	Logger      *slog.Logger
+	Store       UsageStore
 }
 type API struct {
 	validKeys   map[string]KeyConfig
@@ -49,6 +50,11 @@ func New(cfg Config) *API {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}
 
+	store := cfg.Store
+	if store == nil {
+		store = newMemoryStore()
+	}
+
 	return &API{
 		validKeys:   cfg.Keys,
 		upstreamKey: cfg.UpstreamKey,
@@ -56,7 +62,7 @@ func New(cfg Config) *API {
 		client:      cfg.Client,
 		timeout:     timeout,
 		limiters:    make(map[string]*rate.Limiter),
-		store:       newMemoryStore(),
+		store:       store,
 		logger:      logger,
 	}
 }

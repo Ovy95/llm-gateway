@@ -72,7 +72,7 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			Usage struct {
 				PromptTokens     int `json:"prompt_tokens"`
 				CompletionTokens int `json:"completion_tokens"`
-			} `json:"Usage"`
+			} `json:"usage"`
 		}
 		if json.Unmarshal(body, &parsed) == nil {
 			if cost, ok := costUSD(parsed.Model, parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens); ok {
@@ -94,5 +94,4 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
-
 }

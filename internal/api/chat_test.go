@@ -178,6 +178,12 @@ func TestChatCompletions_RateLimit(t *testing.T) {
 			key:           "sk-demo-bob",
 			wantStatus:    http.StatusOK,
 		},
+		{
+			name:          "sad path: bob's lower 2/min limit blocks his 3rd request",
+			priorRequests: []string{"sk-demo-bob", "sk-demo-bob"},
+			key:           "sk-demo-bob",
+			wantStatus:    http.StatusTooManyRequests,
+		},
 	}
 
 	for _, tt := range tests {

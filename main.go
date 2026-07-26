@@ -30,6 +30,11 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	cfg := api.Config{
 		Keys:        validKeys,
 		UpstreamKey: upstreamKey,
@@ -40,5 +45,6 @@ func main() {
 	}
 	a := api.New(cfg)
 
-	log.Fatal(http.ListenAndServe(":8080", a.Routes()))
+	logger.Info("gateway listening", "port", port, "upstream", upstreamURL)
+	log.Fatal(http.ListenAndServe(":"+port, a.Routes()))
 }
