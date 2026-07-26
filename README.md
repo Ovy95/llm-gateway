@@ -107,6 +107,18 @@ go run .
 
 The server listens on `:8080` (override with the `PORT` env var), and logs a `gateway listening` line on start. Every successful request prints one JSON audit line to stdout.
 
+### Configuration
+
+Copy `.env.example` to `.env` and fill in your key — `.env` is gitignored and loaded automatically at startup.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `OPENAI_API_KEY` | **yes** | — | Your real OpenAI key. Held server-side, never exposed to clients — they use the seeded gateway keys instead. |
+| `UPSTREAM_URL` | no | `https://api.openai.com` | Provider base URL. Point at a mock or a compatible provider. |
+| `PORT` | no | `8080` | Port the gateway listens on. |
+
+Clients authenticate with the in-memory gateway keys seeded in `main.go` — `sk-demo-alice` (5 req/min, $0.10) and `sk-demo-bob` (2 req/min, $0.01) — not with your real `OPENAI_API_KEY`.
+
 ### Try it with curl
 
 ```bash
