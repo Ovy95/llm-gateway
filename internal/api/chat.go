@@ -78,7 +78,7 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if cost, ok := costUSD(parsed.Model, parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens); ok {
 				a.store.Record(key, parsed.Usage.PromptTokens+parsed.Usage.CompletionTokens, cost)
 				a.audit(auditEntry{
-					key:              key,
+					tenant:           keyCfg.Tenant,
 					model:            parsed.Model,
 					promptTokens:     parsed.Usage.PromptTokens,
 					completionTokens: parsed.Usage.CompletionTokens,

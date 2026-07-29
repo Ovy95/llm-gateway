@@ -6,7 +6,7 @@ import (
 )
 
 type auditEntry struct {
-	key              string
+	tenant           string
 	model            string
 	promptTokens     int
 	completionTokens int
@@ -18,7 +18,7 @@ type auditEntry struct {
 
 func (a *API) audit(e auditEntry) {
 	a.logger.Info("request",
-		slog.String("key", e.key),
+		slog.String("tenant", e.tenant),
 		slog.String("model", e.model),
 		slog.Int("prompt_tokens", e.promptTokens),
 		slog.Int("completion_tokens", e.completionTokens),
