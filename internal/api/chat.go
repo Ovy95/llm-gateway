@@ -42,6 +42,8 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	entry.tenant = keyCfg.Tenant
 
+	r.Body = http.MaxBytesReader(w, r.Body, a.maxRequestBytes)
+
 	if !a.limiterFor(key).Allow() {
 		entry.decision = "rate_limited"
 		entry.status = http.StatusTooManyRequests
@@ -68,26 +70,41 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.forwardToUpstream(ctx, r)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		var tooLarge *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooLarge):
+			entry.decision = "request_too_large"
+			entry.status = http.StatusRequestEntityTooLarge
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		case errors.Is(err, context.DeadlineExceeded):
 			entry.decision = "upstream_timeout"
 			entry.status = http.StatusGatewayTimeout
 			writeError(w, http.StatusGatewayTimeout, "gateway timeout")
-			return
+		default:
+			entry.decision = "upstream_unreachable"
+			entry.status = http.StatusBadGateway
+			writeError(w, http.StatusBadGateway, "upstream request failed")
 		}
-		entry.decision = "upstream_unreachable"
-		entry.status = http.StatusBadGateway
-		writeError(w, http.StatusBadGateway, "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
 
 	entry.status = resp.StatusCode
 
-	body, err := io.ReadAll(resp.Body)
+	// +1 so a body exactly at the limit still reads fully, while anything
+	// past it trips the length check below instead of being read in full.
+	limited := io.LimitReader(resp.Body, a.maxResponseBytes+1)
+	body, err := io.ReadAll(limited)
 	if err != nil {
 		entry.decision = "upstream_unreachable"
 		entry.status = http.StatusBadGateway
 		writeError(w, http.StatusBadGateway, "reading upstream response")
+		return
+	}
+	if int64(len(body)) > a.maxResponseBytes {
+		entry.decision = "upstream_response_too_large"
+		entry.status = http.StatusBadGateway
+		writeError(w, http.StatusBadGateway, "upstream response too large")
 		return
 	}
 

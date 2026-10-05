@@ -556,3 +556,105 @@ func TestChatCompletions_AuditLogCoversAllOutcomes(t *testing.T) {
 		})
 	}
 }
+
+func TestChatCompletions_RequestBodySizeLimit(t *testing.T) {
+	const limit = 32
+
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer fake.Close()
+
+	h := api.New(api.Config{
+		Keys:            map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 100}},
+		UpstreamKey:     "fake-key",
+		UpstreamURL:     fake.URL,
+		Client:          fake.Client(),
+		MaxRequestBytes: limit,
+	}).Routes()
+
+	tests := []struct {
+		name       string
+		bodySize   int
+		wantStatus int
+	}{
+		{
+			name:       "happy path: a request body at the limit is forwarded normally",
+			bodySize:   limit,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "sad path: a request body over the limit is rejected with 413, not read in full",
+			bodySize:   limit * 100,
+			wantStatus: http.StatusRequestEntityTooLarge,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.NewReader(strings.Repeat("a", tt.bodySize))
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+			req.Header.Set("Authorization", "Bearer sk-demo-alice")
+			w := httptest.NewRecorder()
+
+			h.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestChatCompletions_ResponseBodySizeLimit(t *testing.T) {
+	const limit = 32
+
+	tests := []struct {
+		name         string
+		responseSize int
+		wantStatus   int
+		wantFullBody bool
+	}{
+		{
+			name:         "happy path: a response body at the limit is passed through in full",
+			responseSize: limit,
+			wantStatus:   http.StatusOK,
+			wantFullBody: true,
+		},
+		{
+			name:         "sad path: a response body over the limit is rejected with 502 instead of being buffered in full",
+			responseSize: limit * 100,
+			wantStatus:   http.StatusBadGateway,
+			wantFullBody: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := strings.Repeat("a", tt.responseSize)
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(payload))
+			}))
+			defer fake.Close()
+
+			h := api.New(api.Config{
+				Keys:             map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 100}},
+				UpstreamKey:      "fake-key",
+				UpstreamURL:      fake.URL,
+				Client:           fake.Client(),
+				MaxResponseBytes: limit,
+			}).Routes()
+
+			w := doRequest(t, h, "sk-demo-alice")
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+			if tt.wantFullBody && w.Body.String() != payload {
+				t.Errorf("got body %q, want the full %d-byte payload", w.Body.String(), tt.responseSize)
+			}
+		})
+	}
+}
