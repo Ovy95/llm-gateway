@@ -2,10 +2,13 @@ package api_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -254,6 +257,110 @@ func TestChatCompletions_SpendCap(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChatCompletions_SpendCapConcurrency(t *testing.T) {
+	t.Run("sad path: concurrent requests on the same key cannot both slip past the spend cap", func(t *testing.T) {
+		// each call reports 1M+1M tokens on gpt-4o-mini = $0.15 + $0.60 = $0.75,
+		// so only the first of a concurrent batch should fit under a $0.10 budget.
+		fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"model":"gpt-4o-mini","usage":{"prompt_tokens":1000000,"completion_tokens":1000000}}`))
+		}))
+		defer fake.Close()
+
+		h := api.New(api.Config{
+			Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 0.10, RPM: 1000}},
+			UpstreamKey: "fake-key",
+			UpstreamURL: fake.URL,
+			Client:      fake.Client(),
+		}).Routes()
+
+		const concurrency = 10
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		statusCounts := map[int]int{}
+
+		for i := 0; i < concurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				w := doRequest(t, h, "sk-demo-alice")
+				mu.Lock()
+				statusCounts[w.Code]++
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+
+		if got := statusCounts[http.StatusOK]; got != 1 {
+			t.Errorf("got %d successful (200) requests, want exactly 1 — spend cap race let more than one through; counts: %v", got, statusCounts)
+		}
+		if got := statusCounts[http.StatusPaymentRequired]; got != concurrency-1 {
+			t.Errorf("got %d rejected (402) requests, want %d; counts: %v", got, concurrency-1, statusCounts)
+		}
+	})
+
+	t.Run("happy path: concurrent requests within budget are all recorded without lost updates", func(t *testing.T) {
+		fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"model":"gpt-4o-mini","usage":{"prompt_tokens":10,"completion_tokens":20}}`))
+		}))
+		defer fake.Close()
+
+		h := api.New(api.Config{
+			Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 1000}},
+			UpstreamKey: "fake-key",
+			UpstreamURL: fake.URL,
+			Client:      fake.Client(),
+		}).Routes()
+
+		const concurrency = 20
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		okCount := 0
+
+		for i := 0; i < concurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				w := doRequest(t, h, "sk-demo-alice")
+				if w.Code == http.StatusOK {
+					mu.Lock()
+					okCount++
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+
+		if okCount != concurrency {
+			t.Fatalf("got %d successful requests, want %d — none should be rejected at this budget", okCount, concurrency)
+		}
+
+		statsReq := httptest.NewRequest(http.MethodGet, "/stats", nil)
+		statsW := httptest.NewRecorder()
+		h.ServeHTTP(statsW, statsReq)
+
+		var stats map[string]struct {
+			Requests int     `json:"requests"`
+			SpendUSD float64 `json:"spend_usd"`
+		}
+		if err := json.Unmarshal(statsW.Body.Bytes(), &stats); err != nil {
+			t.Fatalf("decoding stats: %v", err)
+		}
+
+		wantPerCallCost := 0.15*10/1_000_000 + 0.60*20/1_000_000
+		wantSpend := wantPerCallCost * float64(concurrency)
+
+		got := stats["alice"]
+		if got.Requests != concurrency {
+			t.Errorf("recorded requests = %d, want %d — a concurrent update was lost", got.Requests, concurrency)
+		}
+		if math.Abs(got.SpendUSD-wantSpend) > 1e-9 {
+			t.Errorf("recorded spend = %v, want %v", got.SpendUSD, wantSpend)
+		}
+	})
 }
 
 func TestChatCompletions_AuditLogNoBodies(t *testing.T) {

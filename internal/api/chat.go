@@ -41,6 +41,12 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Held from the budget check through Record so two concurrent requests
+	// on the same key can't both slip under the cap before either records.
+	budgetMu := a.budgetMuFor(key)
+	budgetMu.Lock()
+	defer budgetMu.Unlock()
+
 	if a.store.SpendUSD(key) >= keyCfg.BudgetUSD {
 		writeError(w, http.StatusPaymentRequired, "spend cap exceeded") // 402
 		return

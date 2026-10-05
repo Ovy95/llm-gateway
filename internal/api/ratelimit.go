@@ -1,6 +1,10 @@
 package api
 
-import "golang.org/x/time/rate"
+import (
+	"sync"
+
+	"golang.org/x/time/rate"
+)
 
 const defaultRPM = 5
 
@@ -23,4 +27,20 @@ func (a *API) limiterFor(key string) *rate.Limiter {
 		a.limiters[key] = limiter
 	}
 	return limiter
+}
+
+// budgetMuFor returns the per-key lock that serializes a key's
+// spend-check-then-record section, so two concurrent requests on the same
+// key can't both read SpendUSD as under-budget before either one's Record
+// lands.
+func (a *API) budgetMuFor(key string) *sync.Mutex {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	bm, ok := a.budgetLocks[key]
+	if !ok {
+		bm = &sync.Mutex{}
+		a.budgetLocks[key] = bm
+	}
+	return bm
 }
