@@ -26,6 +26,12 @@ func (a *API) forwardToUpstream(ctx context.Context, r *http.Request) (*http.Res
 
 func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	entry := auditEntry{decision: "unauthorized", status: http.StatusUnauthorized}
+	defer func() {
+		entry.latency = time.Since(start)
+		a.audit(entry)
+	}()
+
 	key, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 
 	keyCfg, found := a.validKeys[key]
@@ -34,8 +40,11 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "missing or invalid api key")
 		return
 	}
+	entry.tenant = keyCfg.Tenant
 
 	if !a.limiterFor(key).Allow() {
+		entry.decision = "rate_limited"
+		entry.status = http.StatusTooManyRequests
 		w.Header().Set("Retry-After", strconv.Itoa(60/a.rpmFor(key)))
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
@@ -48,6 +57,8 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer budgetMu.Unlock()
 
 	if a.store.SpendUSD(key) >= keyCfg.BudgetUSD {
+		entry.decision = "budget_exceeded"
+		entry.status = http.StatusPaymentRequired
 		writeError(w, http.StatusPaymentRequired, "spend cap exceeded") // 402
 		return
 	}
@@ -58,21 +69,30 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.forwardToUpstream(ctx, r)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
+			entry.decision = "upstream_timeout"
+			entry.status = http.StatusGatewayTimeout
 			writeError(w, http.StatusGatewayTimeout, "gateway timeout")
 			return
 		}
+		entry.decision = "upstream_unreachable"
+		entry.status = http.StatusBadGateway
 		writeError(w, http.StatusBadGateway, "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
 
+	entry.status = resp.StatusCode
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		entry.decision = "upstream_unreachable"
+		entry.status = http.StatusBadGateway
 		writeError(w, http.StatusBadGateway, "reading upstream response")
 		return
 	}
 
 	if resp.StatusCode == http.StatusOK {
+		entry.decision = "allowed_unbilled" // overwritten below once cost is known
 		var parsed struct {
 			Model string `json:"model"`
 			Usage struct {
@@ -81,20 +101,17 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			} `json:"usage"`
 		}
 		if json.Unmarshal(body, &parsed) == nil {
+			entry.model = parsed.Model
+			entry.promptTokens = parsed.Usage.PromptTokens
+			entry.completionTokens = parsed.Usage.CompletionTokens
 			if cost, ok := costUSD(parsed.Model, parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens); ok {
 				a.store.Record(key, parsed.Usage.PromptTokens+parsed.Usage.CompletionTokens, cost)
-				a.audit(auditEntry{
-					tenant:           keyCfg.Tenant,
-					model:            parsed.Model,
-					promptTokens:     parsed.Usage.PromptTokens,
-					completionTokens: parsed.Usage.CompletionTokens,
-					costUSD:          cost,
-					status:           resp.StatusCode,
-					latency:          time.Since(start),
-					decision:         "allowed",
-				})
+				entry.costUSD = cost
+				entry.decision = "allowed"
 			}
 		}
+	} else {
+		entry.decision = "upstream_error"
 	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))

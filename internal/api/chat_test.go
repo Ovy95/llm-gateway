@@ -413,3 +413,146 @@ func TestChatCompletions_AuditLogNoBodies(t *testing.T) {
 		}
 	})
 }
+
+func TestChatCompletions_AuditLogCoversAllOutcomes(t *testing.T) {
+	successHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"gpt-4o-mini","usage":{"prompt_tokens":10,"completion_tokens":20}}`))
+	}
+	costlyHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"gpt-4o-mini","usage":{"prompt_tokens":1000000,"completion_tokens":1000000}}`))
+	}
+	unknownModelHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"gpt-9-ultra","usage":{"prompt_tokens":10,"completion_tokens":20}}`))
+	}
+	serverErrorHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"boom"}`))
+	}
+	slowHandler := func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.Write([]byte(`{"ok":true}`))
+	}
+
+	tests := []struct {
+		name          string
+		requestKey    string
+		budget        float64
+		rpm           int
+		priorRequests int
+		upstream      http.HandlerFunc
+		timeout       time.Duration
+		wantStatus    int
+		wantDecision  string
+	}{
+		{
+			name:         `happy path: a successful call is audited with decision "allowed"`,
+			requestKey:   "sk-demo-alice",
+			budget:       100,
+			rpm:          100,
+			upstream:     successHandler,
+			wantStatus:   http.StatusOK,
+			wantDecision: "allowed",
+		},
+		{
+			name:         "sad path: an unauthorized request is still audited, not dropped silently",
+			requestKey:   "wrong-key",
+			budget:       100,
+			rpm:          100,
+			upstream:     successHandler,
+			wantStatus:   http.StatusUnauthorized,
+			wantDecision: "unauthorized",
+		},
+		{
+			name:          "sad path: a rate-limited request is audited",
+			requestKey:    "sk-demo-alice",
+			budget:        100,
+			rpm:           1,
+			priorRequests: 1,
+			upstream:      successHandler,
+			wantStatus:    http.StatusTooManyRequests,
+			wantDecision:  "rate_limited",
+		},
+		{
+			name:          "sad path: a budget-exceeded request is audited",
+			requestKey:    "sk-demo-alice",
+			budget:        0.10,
+			rpm:           100,
+			priorRequests: 1,
+			upstream:      costlyHandler,
+			wantStatus:    http.StatusPaymentRequired,
+			wantDecision:  "budget_exceeded",
+		},
+		{
+			name:         "sad path: an upstream timeout is audited",
+			requestKey:   "sk-demo-alice",
+			budget:       100,
+			rpm:          100,
+			upstream:     slowHandler,
+			timeout:      10 * time.Millisecond,
+			wantStatus:   http.StatusGatewayTimeout,
+			wantDecision: "upstream_timeout",
+		},
+		{
+			name:         "sad path: an upstream 5xx passthrough is audited",
+			requestKey:   "sk-demo-alice",
+			budget:       100,
+			rpm:          100,
+			upstream:     serverErrorHandler,
+			wantStatus:   http.StatusInternalServerError,
+			wantDecision: "upstream_error",
+		},
+		{
+			name:         "sad path: a 200 response for an unbillable (unknown) model is audited, not dropped silently",
+			requestKey:   "sk-demo-alice",
+			budget:       100,
+			rpm:          100,
+			upstream:     unknownModelHandler,
+			wantStatus:   http.StatusOK,
+			wantDecision: "allowed_unbilled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := httptest.NewServer(http.HandlerFunc(tt.upstream))
+			defer fake.Close()
+
+			var logBuf bytes.Buffer
+			h := api.New(api.Config{
+				Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: tt.budget, RPM: tt.rpm}},
+				UpstreamKey: "fake-key",
+				UpstreamURL: fake.URL,
+				Client:      fake.Client(),
+				Timeout:     tt.timeout,
+				Logger:      slog.New(slog.NewJSONHandler(&logBuf, nil)),
+			}).Routes()
+
+			for i := 0; i < tt.priorRequests; i++ {
+				doRequest(t, h, tt.requestKey)
+			}
+
+			w := doRequest(t, h, tt.requestKey)
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+
+			lines := strings.Split(strings.TrimSpace(logBuf.String()), "\n")
+			if len(lines) == 0 || lines[len(lines)-1] == "" {
+				t.Fatalf("expected an audit log entry for the measured request, got none; log was: %q", logBuf.String())
+			}
+			var logged map[string]any
+			if err := json.Unmarshal([]byte(lines[len(lines)-1]), &logged); err != nil {
+				t.Fatalf("decoding audit log line: %v; line was %q", err, lines[len(lines)-1])
+			}
+			if logged["decision"] != tt.wantDecision {
+				t.Errorf("logged decision = %v, want %q; log was: %q", logged["decision"], tt.wantDecision, logBuf.String())
+			}
+			if gotStatus, _ := logged["status"].(float64); int(gotStatus) != tt.wantStatus {
+				t.Errorf("logged status = %v, want %d", logged["status"], tt.wantStatus)
+			}
+		})
+	}
+}
