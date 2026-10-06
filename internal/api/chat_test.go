@@ -458,13 +458,13 @@ func TestChatCompletions_AuditLogCoversAllOutcomes(t *testing.T) {
 			wantDecision: "allowed",
 		},
 		{
-			name:         "sad path: an unauthorized request is still audited, not dropped silently",
+			name:         "sad path: an unauthorised request is still audited, not dropped silently",
 			requestKey:   "wrong-key",
 			budget:       100,
 			rpm:          100,
 			upstream:     successHandler,
 			wantStatus:   http.StatusUnauthorized,
-			wantDecision: "unauthorized",
+			wantDecision: "unauthorised",
 		},
 		{
 			name:          "sad path: a rate-limited request is audited",
@@ -697,7 +697,7 @@ func TestChatCompletions_BudgetLockRespectsContextCancellation(t *testing.T) {
 
 		// Second request, on the same key, is still queued behind the
 		// first — waiting on the budget lock — when its context is
-		// canceled.
+		// cancelled.
 		ctx, cancel := context.WithCancel(context.Background())
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
 		req.Header.Set("Authorization", "Bearer sk-demo-alice")
@@ -714,7 +714,7 @@ func TestChatCompletions_BudgetLockRespectsContextCancellation(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			t.Fatal("request did not return after its context was canceled; budget lock wait ignored cancellation")
+			t.Fatal("request did not return after its context was cancelled; budget lock wait ignored cancellation")
 		}
 
 		if w.Code != 499 {
@@ -724,7 +724,7 @@ func TestChatCompletions_BudgetLockRespectsContextCancellation(t *testing.T) {
 		hits := upstreamHits
 		hitsMu.Unlock()
 		if hits != 1 {
-			t.Errorf("upstream was hit %d times, want 1 — the canceled request should never have gotten past the budget lock", hits)
+			t.Errorf("upstream was hit %d times, want 1 — the cancelled request should never have gotten past the budget lock", hits)
 		}
 
 		close(release)

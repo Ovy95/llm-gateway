@@ -33,7 +33,7 @@ func (a *API) forwardToUpstream(ctx context.Context, r *http.Request) (*http.Res
 
 func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	entry := auditEntry{decision: "unauthorized", status: http.StatusUnauthorized}
+	entry := auditEntry{decision: "unauthorised", status: http.StatusUnauthorized}
 	defer func() {
 		entry.latency = time.Since(start)
 		a.audit(entry)
@@ -65,11 +65,11 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// disconnected doesn't sit queued behind others on a busy key holding
 	// its goroutine for nothing; it's released as soon as the budget
 	// decision is final (below) rather than for the rest of the handler,
-	// so it doesn't also serialize writing the response back to slow
+	// so it doesn't also serialise writing the response back to slow
 	// clients.
 	budgetMu := a.budgetMuFor(key)
 	if err := budgetMu.Lock(r.Context()); err != nil {
-		entry.decision = "canceled"
+		entry.decision = "cancelled"
 		entry.status = statusClientClosedRequest
 		writeError(w, statusClientClosedRequest, "client disconnected")
 		return

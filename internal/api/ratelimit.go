@@ -59,7 +59,7 @@ func (m keyMutex) Unlock() {
 	m <- struct{}{}
 }
 
-// budgetMuFor returns the per-key lock that serializes a key's
+// budgetMuFor returns the per-key lock that serialises a key's
 // spend-check-then-record section, so two concurrent requests on the same
 // key can't both read SpendUSD as under-budget before either one's Record
 // lands.
