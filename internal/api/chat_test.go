@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"math"
@@ -657,4 +658,76 @@ func TestChatCompletions_ResponseBodySizeLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChatCompletions_BudgetLockRespectsContextCancellation(t *testing.T) {
+	t.Run("sad path: a request queued behind a slow call on the same key is aborted, not left blocked, once its client disconnects", func(t *testing.T) {
+		holding := make(chan struct{})
+		release := make(chan struct{})
+		var upstreamHits int
+		var hitsMu sync.Mutex
+
+		fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hitsMu.Lock()
+			upstreamHits++
+			hitsMu.Unlock()
+			close(holding)
+			<-release
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"model":"gpt-4o-mini","usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+		}))
+		defer fake.Close()
+
+		h := api.New(api.Config{
+			Keys:        map[string]api.KeyConfig{"sk-demo-alice": {Tenant: "alice", BudgetUSD: 100, RPM: 1000}},
+			UpstreamKey: "fake-key",
+			UpstreamURL: fake.URL,
+			Client:      fake.Client(),
+		}).Routes()
+
+		// First request takes the per-key budget lock and holds it inside
+		// the upstream call until the test releases it.
+		var firstWG sync.WaitGroup
+		firstWG.Add(1)
+		go func() {
+			defer firstWG.Done()
+			doRequest(t, h, "sk-demo-alice")
+		}()
+		<-holding
+
+		// Second request, on the same key, is still queued behind the
+		// first — waiting on the budget lock — when its context is
+		// canceled.
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+		req.Header.Set("Authorization", "Bearer sk-demo-alice")
+		w := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			h.ServeHTTP(w, req)
+			close(done)
+		}()
+
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("request did not return after its context was canceled; budget lock wait ignored cancellation")
+		}
+
+		if w.Code != 499 {
+			t.Errorf("got status %d, want 499 (client closed request)", w.Code)
+		}
+		hitsMu.Lock()
+		hits := upstreamHits
+		hitsMu.Unlock()
+		if hits != 1 {
+			t.Errorf("upstream was hit %d times, want 1 — the canceled request should never have gotten past the budget lock", hits)
+		}
+
+		close(release)
+		firstWG.Wait()
+	})
 }

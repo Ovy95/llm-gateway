@@ -43,7 +43,7 @@ type API struct {
 	timeout          time.Duration
 	limiters         map[string]*rate.Limiter
 	mu               sync.Mutex
-	budgetLocks      map[string]*sync.Mutex
+	budgetLocks      map[string]keyMutex
 	store            UsageStore
 	logger           *slog.Logger
 	maxRequestBytes  int64
@@ -81,7 +81,7 @@ func New(cfg Config) *API {
 		client:           cfg.Client,
 		timeout:          timeout,
 		limiters:         make(map[string]*rate.Limiter),
-		budgetLocks:      make(map[string]*sync.Mutex),
+		budgetLocks:      make(map[string]keyMutex),
 		store:            store,
 		logger:           logger,
 		maxRequestBytes:  maxRequestBytes,

@@ -9,8 +9,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// statusClientClosedRequest follows the widely used (if non-standard, e.g.
+// nginx) convention for a client that disconnected before the server
+// finished responding — distinct from a gateway-side timeout (504) or a
+// bad upstream response (502).
+const statusClientClosedRequest = 499
 
 func (a *API) forwardToUpstream(ctx context.Context, r *http.Request) (*http.Response, error) {
 	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.upstreamURL+"/v1/chat/completions", r.Body)
@@ -54,9 +61,21 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Held from the budget check through Record so two concurrent requests
 	// on the same key can't both slip under the cap before either records.
+	// Lock respects the request's context, so a client that has already
+	// disconnected doesn't sit queued behind others on a busy key holding
+	// its goroutine for nothing; it's released as soon as the budget
+	// decision is final (below) rather than for the rest of the handler,
+	// so it doesn't also serialize writing the response back to slow
+	// clients.
 	budgetMu := a.budgetMuFor(key)
-	budgetMu.Lock()
-	defer budgetMu.Unlock()
+	if err := budgetMu.Lock(r.Context()); err != nil {
+		entry.decision = "canceled"
+		entry.status = statusClientClosedRequest
+		writeError(w, statusClientClosedRequest, "client disconnected")
+		return
+	}
+	unlockBudget := sync.OnceFunc(budgetMu.Unlock)
+	defer unlockBudget()
 
 	if a.store.SpendUSD(key) >= keyCfg.BudgetUSD {
 		entry.decision = "budget_exceeded"
@@ -130,6 +149,11 @@ func (a *API) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		entry.decision = "upstream_error"
 	}
+
+	// The budget decision (and any Record) is final at this point; release
+	// the lock before writing the response so a slow client can't also
+	// hold up the next request on this key.
+	unlockBudget()
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
